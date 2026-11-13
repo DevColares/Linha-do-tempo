@@ -97,3 +97,4 @@ function compressAndConvertToBase64(file: File, maxWidth = 1200, quality = 0.75)
     reader.readAsDataURL(file);
   });
 }
+
