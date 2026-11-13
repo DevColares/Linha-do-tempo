@@ -1,62 +1,23 @@
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from './firebase';
 
+export interface UploadResult {
+  url: string;
+  name: string;
+  size: string;
+  type: 'image' | 'pdf';
+}
+
 /**
- * Faz upload de um arquivo direto para o Firebase Storage
- * com fallback para base64 comprimido local se Storage der erro de permissão/CORS.
+ * Comprime a imagem no cliente antes de qualquer upload.
+ * Reduz fotos pesadas de celulares (10-25MB) para ~150-300KB quase instantaneamente.
  */
-export async function uploadAttachment(file: File, folder = 'attachments'): Promise<{ url: string; name: string; size: string }> {
-  const extension = file.name.split('.').pop() || 'jpg';
-  const cleanName = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${extension}`;
-  const storagePath = `${folder}/${cleanName}`;
-  const fileRef = ref(storage, storagePath);
-
-  const formattedSize = formatFileSize(file.size);
-
-  try {
-    const snapshot = await uploadBytes(fileRef, file, {
-      contentType: file.type || 'image/jpeg'
-    });
-    const downloadUrl = await getDownloadURL(snapshot.ref);
-    return {
-      url: downloadUrl,
-      name: file.name,
-      size: formattedSize
-    };
-  } catch (error) {
-    console.warn('Falha no upload para o Firebase Storage (usando fallback base64 comprimido):', error);
-    // Fallback: Converte imagem comprimida em dataUrl para não impedir o usuário de salvar
-    const base64Url = await compressAndConvertToBase64(file);
-    return {
-      url: base64Url,
-      name: file.name,
-      size: formattedSize
-    };
+export async function compressImage(file: File, maxWidth = 1280, quality = 0.72): Promise<Blob> {
+  if (!file.type.startsWith('image/')) {
+    return file;
   }
-}
 
-function formatFileSize(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-}
-
-/**
- * Redimensiona e comprime imagens de câmeras mobile (que costumam ter 10MB+)
- * para caber perfeitamente no Firestore/Storage e carregar instantaneamente.
- */
-function compressAndConvertToBase64(file: File, maxWidth = 1200, quality = 0.75): Promise<string> {
-  return new Promise((resolve, reject) => {
-    if (!file.type.startsWith('image/')) {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-      return;
-    }
-
+  return new Promise((resolve) => {
     const img = new Image();
     const reader = new FileReader();
 
@@ -78,23 +39,110 @@ function compressAndConvertToBase64(file: File, maxWidth = 1200, quality = 0.75)
       canvas.height = height;
       const ctx = canvas.getContext('2d');
       if (!ctx) {
-        resolve(img.src);
+        resolve(file);
         return;
       }
 
       ctx.drawImage(img, 0, 0, width, height);
-      const dataUrl = canvas.toDataURL('image/jpeg', quality);
-      resolve(dataUrl);
+      canvas.toBlob(
+        (blob) => {
+          resolve(blob || file);
+        },
+        'image/jpeg',
+        quality
+      );
     };
 
-    img.onerror = () => {
-      // Se der erro ao decodificar imagem, lê arquivo normal
-      const r = new FileReader();
-      r.onload = () => resolve(r.result as string);
-      r.readAsDataURL(file);
-    };
-
+    img.onerror = () => resolve(file);
     reader.readAsDataURL(file);
   });
 }
 
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+/**
+ * Upload ultra-rápido: comprime primeiro, tenta Firebase Storage com timeout de 4s,
+ * e se o Storage demorar ou falhar, usa base64 comprimido instantâneo.
+ */
+export async function uploadSingleAttachment(file: File, folder = 'attachments'): Promise<UploadResult> {
+  const isImage = file.type.startsWith('image/');
+  const compressedBlob = isImage ? await compressImage(file) : file;
+  const formattedSize = formatFileSize(compressedBlob.size);
+
+  const extension = file.name.split('.').pop() || 'jpg';
+  const cleanName = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${extension}`;
+  const storagePath = `${folder}/${cleanName}`;
+  const fileRef = ref(storage, storagePath);
+
+  // Tentativa de envio ao Storage com timeout de 4 segundos para nunca travar
+  const uploadWithTimeout = new Promise<string>(async (resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error('Storage timeout - fallback rápido ativado'));
+    }, 4000);
+
+    try {
+      const snapshot = await uploadBytes(fileRef, compressedBlob, {
+        contentType: isImage ? 'image/jpeg' : file.type
+      });
+      clearTimeout(timer);
+      const downloadUrl = await getDownloadURL(snapshot.ref);
+      resolve(downloadUrl);
+    } catch (err) {
+      clearTimeout(timer);
+      reject(err);
+    }
+  });
+
+  try {
+    const url = await uploadWithTimeout;
+    return {
+      url,
+      name: file.name,
+      size: formattedSize,
+      type: isImage ? 'image' : 'pdf'
+    };
+  } catch (error) {
+    console.warn('Usando armazenamento rápido integrado:', error);
+    const base64Url = await blobToBase64(compressedBlob);
+    return {
+      url: base64Url,
+      name: file.name,
+      size: formattedSize,
+      type: isImage ? 'image' : 'pdf'
+    };
+  }
+}
+
+/**
+ * Upload simultâneo (em paralelo) de múltiplos arquivos
+ */
+export async function uploadMultipleAttachments(
+  files: File[], 
+  folder = 'attachments',
+  onProgress?: (current: number, total: number) => void
+): Promise<UploadResult[]> {
+  let completed = 0;
+  const promises = files.map(async (file) => {
+    const result = await uploadSingleAttachment(file, folder);
+    completed++;
+    if (onProgress) onProgress(completed, files.length);
+    return result;
+  });
+
+  return Promise.all(promises);
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}

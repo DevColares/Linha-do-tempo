@@ -2,12 +2,18 @@ import React, { useState, useRef } from 'react';
 import { PlusCircle, X, DollarSign, Heart, Camera, Image as ImageIcon, Trash2, Loader2 } from 'lucide-react';
 import type { TimelineEvent, ExpenseCategory, MomentTag } from '../types';
 import { CATEGORY_CONFIG, MOMENT_TAG_CONFIG } from '../types';
-import { uploadAttachment } from '../lib/storageService';
+import { uploadMultipleAttachments } from '../lib/storageService';
 
 interface AddEventModalProps {
   isOpen: boolean;
   onClose: () => void;
   onAdd: (event: Omit<TimelineEvent, 'id'>) => void;
+}
+
+interface LocalFileItem {
+  id: string;
+  file: File;
+  previewUrl: string;
 }
 
 export const AddExpenseModal: React.FC<AddEventModalProps> = ({
@@ -21,10 +27,10 @@ export const AddExpenseModal: React.FC<AddEventModalProps> = ({
   const [description, setDescription] = useState('');
   const [location, setLocation] = useState('');
   
-  // Arquivo local (câmera / galeria)
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  // Lista de múltiplos arquivos selecionados
+  const [selectedFiles, setSelectedFiles] = useState<LocalFileItem[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -41,19 +47,29 @@ export const AddExpenseModal: React.FC<AddEventModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setSelectedFile(file);
-      const localUrl = URL.createObjectURL(file);
-      setPreviewUrl(localUrl);
-    }
+  const handleFilesAdded = (filesList: FileList | null) => {
+    if (!filesList || filesList.length === 0) return;
+    
+    const newItems: LocalFileItem[] = Array.from(filesList).map(file => ({
+      id: `${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+      file,
+      previewUrl: URL.createObjectURL(file)
+    }));
+
+    setSelectedFiles(prev => [...prev, ...newItems]);
   };
 
-  const handleRemoveFile = () => {
-    setSelectedFile(null);
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setPreviewUrl(null);
+  const handleRemoveFile = (id: string) => {
+    setSelectedFiles(prev => {
+      const target = prev.find(item => item.id === id);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter(item => item.id !== id);
+    });
+  };
+
+  const clearAllFiles = () => {
+    selectedFiles.forEach(item => URL.revokeObjectURL(item.previewUrl));
+    setSelectedFiles([]);
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (cameraInputRef.current) cameraInputRef.current.value = '';
   };
@@ -63,20 +79,27 @@ export const AddExpenseModal: React.FC<AddEventModalProps> = ({
     if (!title || !date) return;
 
     setIsUploading(true);
+    setUploadProgress({ current: 0, total: selectedFiles.length });
 
     try {
       let attachments: any[] = [];
-      if (selectedFile) {
-        const uploaded = await uploadAttachment(selectedFile, eventType === 'financial' ? 'comprovantes' : 'momentos');
-        attachments = [
-          {
-            id: 'rec-' + Date.now(),
-            name: uploaded.name,
-            type: selectedFile.type.startsWith('image/') ? 'image' : 'pdf',
-            url: uploaded.url,
-            size: uploaded.size
-          }
-        ];
+      if (selectedFiles.length > 0) {
+        const rawFiles = selectedFiles.map(item => item.file);
+        const folder = eventType === 'financial' ? 'comprovantes' : 'momentos';
+        
+        const uploadedList = await uploadMultipleAttachments(
+          rawFiles, 
+          folder,
+          (current, total) => setUploadProgress({ current, total })
+        );
+
+        attachments = uploadedList.map((uploaded, idx) => ({
+          id: 'rec-' + Date.now() + '-' + idx,
+          name: uploaded.name,
+          type: uploaded.type,
+          url: uploaded.url,
+          size: uploaded.size
+        }));
       }
 
       if (eventType === 'financial') {
@@ -113,7 +136,7 @@ export const AddExpenseModal: React.FC<AddEventModalProps> = ({
       }
 
       // Limpar campos
-      handleRemoveFile();
+      clearAllFiles();
       setTitle('');
       setDescription('');
       setAmount('');
@@ -121,9 +144,10 @@ export const AddExpenseModal: React.FC<AddEventModalProps> = ({
       onClose();
     } catch (err) {
       console.error('Erro ao salvar registro:', err);
-      alert('Erro ao processar imagem ou salvar registro.');
+      alert('Erro ao processar imagens ou salvar registro.');
     } finally {
       setIsUploading(false);
+      setUploadProgress(null);
     }
   };
 
@@ -308,77 +332,88 @@ export const AddExpenseModal: React.FC<AddEventModalProps> = ({
             />
           </div>
 
-          {/* Upload de Imagem (Câmera ou Galeria do Celular) */}
+          {/* Upload de Múltiplas Imagens (Câmera ou Galeria do Celular) */}
           <div className="p-3 rounded-xl bg-white/[0.03] border border-white/10 space-y-2.5">
-            <label className="block text-zinc-300 font-medium">
-              {eventType === 'financial' ? 'Comprovante / Recibo' : 'Foto da Lembrança'}
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="block text-zinc-300 font-medium">
+                {eventType === 'financial' ? 'Comprovantes & Recibos' : 'Fotos da Lembrança'}
+                {selectedFiles.length > 0 && (
+                  <span className="ml-1.5 text-[10px] text-blue-400 font-mono">({selectedFiles.length} foto{selectedFiles.length > 1 ? 's' : ''})</span>
+                )}
+              </label>
 
-            {/* Inputs ocultos nativos do navegador/celular */}
+              {selectedFiles.length > 0 && (
+                <button
+                  type="button"
+                  onClick={clearAllFiles}
+                  className="text-[10px] text-zinc-500 hover:text-red-400 transition-colors"
+                >
+                  Limpar todas
+                </button>
+              )}
+            </div>
+
+            {/* Inputs ocultos nativos */}
             <input 
               ref={cameraInputRef}
               type="file" 
               accept="image/*" 
               capture="environment" 
-              onChange={handleFileChange}
+              onChange={(e) => handleFilesAdded(e.target.files)}
               className="hidden" 
             />
             <input 
               ref={fileInputRef}
               type="file" 
               accept="image/*,application/pdf" 
-              onChange={handleFileChange}
+              multiple 
+              onChange={(e) => handleFilesAdded(e.target.files)}
               className="hidden" 
             />
 
-            {previewUrl ? (
-              <div className="relative rounded-xl overflow-hidden border border-white/20 bg-zinc-900 flex items-center justify-between p-2">
-                <div className="flex items-center gap-3 min-w-0">
-                  <img 
-                    src={previewUrl} 
-                    alt="Preview" 
-                    className="w-12 h-12 rounded-lg object-cover border border-white/10 shrink-0" 
-                  />
-                  <div className="min-w-0">
-                    <p className="text-xs text-white font-medium truncate">
-                      {selectedFile?.name || 'Foto selecionada'}
-                    </p>
-                    <span className="text-[10px] text-zinc-400">
-                      {selectedFile ? (selectedFile.size / 1024 / 1024).toFixed(2) + ' MB' : ''}
-                    </span>
+            {/* Galeria de miniaturas de fotos selecionadas */}
+            {selectedFiles.length > 0 && (
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 pt-1 pb-1">
+                {selectedFiles.map((item) => (
+                  <div key={item.id} className="relative group rounded-lg overflow-hidden border border-white/15 bg-zinc-900 aspect-square">
+                    <img 
+                      src={item.previewUrl} 
+                      alt="Preview" 
+                      className="w-full h-full object-cover" 
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveFile(item.id)}
+                      className="absolute top-1 right-1 p-1 bg-black/70 hover:bg-red-600 text-white rounded-md transition-colors"
+                      title="Remover"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
                   </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={handleRemoveFile}
-                  className="p-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
-                  title="Remover foto"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => cameraInputRef.current?.click()}
-                  className="flex items-center justify-center gap-2 p-2.5 rounded-xl border border-dashed border-white/20 hover:border-white/40 bg-white/[0.02] hover:bg-white/[0.05] active:bg-white/[0.08] text-zinc-300 text-xs font-medium transition-all cursor-pointer touch-manipulation"
-                >
-                  <Camera className="w-4 h-4 text-blue-400 shrink-0" />
-                  <span>Tirar Foto</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center justify-center gap-2 p-2.5 rounded-xl border border-dashed border-white/20 hover:border-white/40 bg-white/[0.02] hover:bg-white/[0.05] active:bg-white/[0.08] text-zinc-300 text-xs font-medium transition-all cursor-pointer touch-manipulation"
-                >
-                  <ImageIcon className="w-4 h-4 text-pink-400 shrink-0" />
-                  <span>Galeria / Arquivo</span>
-                </button>
+                ))}
               </div>
             )}
+
+            {/* Botões para Tirar Foto ou Escolher Várias da Galeria */}
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => cameraInputRef.current?.click()}
+                className="flex items-center justify-center gap-1.5 p-2.5 rounded-xl border border-dashed border-white/20 hover:border-white/40 bg-white/[0.02] hover:bg-white/[0.05] active:bg-white/[0.08] text-zinc-300 text-xs font-medium transition-all cursor-pointer touch-manipulation"
+              >
+                <Camera className="w-4 h-4 text-blue-400 shrink-0" />
+                <span>{selectedFiles.length > 0 ? '+ Tirar Outra' : 'Tirar Foto'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center justify-center gap-1.5 p-2.5 rounded-xl border border-dashed border-white/20 hover:border-white/40 bg-white/[0.02] hover:bg-white/[0.05] active:bg-white/[0.08] text-zinc-300 text-xs font-medium transition-all cursor-pointer touch-manipulation"
+              >
+                <ImageIcon className="w-4 h-4 text-pink-400 shrink-0" />
+                <span>{selectedFiles.length > 0 ? '+ Mais da Galeria' : 'Escolher Várias'}</span>
+              </button>
+            </div>
           </div>
 
           {eventType === 'financial' && (
@@ -417,7 +452,9 @@ export const AddExpenseModal: React.FC<AddEventModalProps> = ({
               {isUploading ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Enviando Foto...
+                  {uploadProgress && uploadProgress.total > 1 
+                    ? `Enviando (${uploadProgress.current}/${uploadProgress.total})...` 
+                    : 'Processando Rápido...'}
                 </>
               ) : (
                 'Gravar Registro'
