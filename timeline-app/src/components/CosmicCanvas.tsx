@@ -54,8 +54,10 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = () => {
 
     const glowTexture = createSoftGlowTexture();
 
+    const isMobile = window.innerWidth < 768;
+
     // 1. Camada de Poeira Cósmica Muito Desfocada e Difusa (Bokeh de Fundo)
-    const deepParticleCount = 900;
+    const deepParticleCount = isMobile ? 350 : 900;
     const deepGeo = new THREE.BufferGeometry();
     const deepPositions = new Float32Array(deepParticleCount * 3);
     const deepColors = new Float32Array(deepParticleCount * 3);
@@ -99,7 +101,7 @@ export const CosmicCanvas: React.FC<CosmicCanvasProps> = () => {
     scene.add(deepParticles);
 
     // 2. Camada Principal de Estrelas Desfocadas com Gradiente Suave
-    const starCount = 1200;
+    const starCount = isMobile ? 450 : 1200;
     const starGeo = new THREE.BufferGeometry();
     const starPositions = new Float32Array(starCount * 3);
     const starColors = new Float32Array(starCount * 3);

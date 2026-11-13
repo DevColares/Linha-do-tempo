@@ -110,32 +110,32 @@ export function App() {
       <CosmicCanvas />
 
       {/* 2. Top Header Glassmorphism */}
-      <header className="relative z-30 pt-6 px-6 sm:px-12 flex flex-col sm:flex-row items-center justify-between gap-4 max-w-7xl mx-auto w-full">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-blue-600 via-indigo-500 to-pink-500 flex items-center justify-center shadow-lg shadow-blue-500/20 border border-white/20">
-            <Sparkles className="w-5 h-5 text-white" />
+      <header className="relative z-30 pt-4 sm:pt-6 px-4 sm:px-12 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4 max-w-7xl mx-auto w-full">
+        <div className="flex items-center gap-2.5 sm:gap-3">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl bg-gradient-to-tr from-blue-600 via-indigo-500 to-pink-500 flex items-center justify-center shadow-lg shadow-blue-500/20 border border-white/20 shrink-0">
+            <Sparkles className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-lg font-bold tracking-tight text-white">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-base sm:text-lg font-bold tracking-tight text-white truncate">
                 Aetheris <span className="text-blue-400 font-light">| Pai & Filho</span>
               </h1>
               {isSyncing ? (
-                <span className="flex items-center gap-1 text-[10px] text-zinc-400 bg-white/5 border border-white/10 px-2 py-0.5 rounded-full">
-                  <Cloud className="w-3 h-3 text-blue-400 animate-pulse" /> Sincronizando...
+                <span className="flex items-center gap-1 text-[9px] sm:text-[10px] text-zinc-400 bg-white/5 border border-white/10 px-1.5 py-0.5 rounded-full">
+                  <Cloud className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-blue-400 animate-pulse" /> Sincronizando
                 </span>
               ) : syncError ? (
-                <span className="flex items-center gap-1 text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full" title="Operando com armazenamento local">
-                  <CloudOff className="w-3 h-3" /> Modo Local
+                <span className="flex items-center gap-1 text-[9px] sm:text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded-full" title="Operando com armazenamento local">
+                  <CloudOff className="w-2.5 h-2.5 sm:w-3 sm:h-3" /> Modo Local
                 </span>
               ) : (
-                <span className="flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
-                  <Cloud className="w-3 h-3" /> Nuvem Ativa
+                <span className="flex items-center gap-1 text-[9px] sm:text-[10px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-full">
+                  <Cloud className="w-2.5 h-2.5 sm:w-3 sm:h-3" /> Nuvem Ativa
                 </span>
               )}
             </div>
-            <p className="text-xs text-zinc-400 tracking-wide font-light">
-              Cronologia de memórias afetivas e prestação de cuidados financeiros
+            <p className="text-[11px] sm:text-xs text-zinc-400 tracking-wide font-light truncate">
+              Cronologia de memórias e cuidados financeiros
             </p>
           </div>
         </div>
@@ -143,7 +143,7 @@ export function App() {
         {/* Botão de Adição */}
         <button
           onClick={() => setIsAddModalOpen(true)}
-          className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium text-sm bg-gradient-to-r from-blue-600 to-pink-600 hover:from-blue-500 hover:to-pink-500 text-white shadow-lg shadow-blue-600/25 border border-white/20 transition-all cursor-pointer transform hover:scale-105 active:scale-95"
+          className="flex items-center justify-center gap-2 px-4 py-2.5 sm:px-5 sm:py-2.5 rounded-xl font-medium text-xs sm:text-sm bg-gradient-to-r from-blue-600 to-pink-600 hover:from-blue-500 hover:to-pink-500 text-white shadow-lg shadow-blue-600/25 border border-white/20 transition-all cursor-pointer transform active:scale-95 touch-manipulation"
         >
           <Plus className="w-4 h-4" />
           Novo Registro
