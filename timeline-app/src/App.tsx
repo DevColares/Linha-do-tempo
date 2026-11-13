@@ -6,8 +6,14 @@ import { AddExpenseModal } from './components/AddExpenseModal';
 import { StatsOverview } from './components/StatsOverview';
 import { INITIAL_EXPENSES } from './data/initialData';
 import type { TimelineEvent } from './types';
-import { Plus, Sparkles } from 'lucide-react';
+import { Plus, Sparkles, Cloud, CloudOff } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { 
+  subscribeToEvents, 
+  addEventToFirestore, 
+  deleteEventFromFirestore,
+  seedInitialDataIfEmpty 
+} from './lib/eventsService';
 
 export function App() {
   const [events, setEvents] = useState<TimelineEvent[]>(() => {
@@ -24,18 +30,53 @@ export function App() {
 
   const [selectedEvent, setSelectedEvent] = useState<TimelineEvent | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(true);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
-  // Persistir no LocalStorage
+  // Sincronização em tempo real com Firestore
   useEffect(() => {
-    localStorage.setItem('timeline_hybrid_events_v2', JSON.stringify(events));
-  }, [events]);
+    let unsubscribe: (() => void) | undefined;
 
-  const handleAddEvent = (newEventData: Omit<TimelineEvent, 'id'>) => {
+    const setupSync = async () => {
+      try {
+        await seedInitialDataIfEmpty();
+        unsubscribe = subscribeToEvents(
+          (cloudEvents) => {
+            if (cloudEvents.length > 0) {
+              setEvents(cloudEvents);
+              localStorage.setItem('timeline_hybrid_events_v2', JSON.stringify(cloudEvents));
+            }
+            setIsSyncing(false);
+            setSyncError(null);
+          },
+          (err) => {
+            console.warn('Firestore offline ou restrito. Usando cache local:', err);
+            setIsSyncing(false);
+            setSyncError('Offline/Local');
+          }
+        );
+      } catch (err: any) {
+        console.warn('Erro ao conectar Firestore:', err);
+        setIsSyncing(false);
+        setSyncError('Offline/Local');
+      }
+    };
+
+    setupSync();
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, []);
+
+  const handleAddEvent = async (newEventData: Omit<TimelineEvent, 'id'>) => {
+    // 1. Otimista local
+    const tempId = (newEventData.eventType === 'moment' ? 'mom-' : 'exp-') + Date.now();
     const newEvent: TimelineEvent = {
       ...newEventData,
-      id: (newEventData.eventType === 'moment' ? 'mom-' : 'exp-') + Date.now()
+      id: tempId
     };
-    setEvents(prev => [...prev, newEvent]);
+    setEvents(prev => [newEvent, ...prev]);
 
     confetti({
       particleCount: 60,
@@ -45,10 +86,22 @@ export function App() {
         ? ['#f472b6', '#fb7185', '#c084fc'] 
         : ['#60a5fa', '#34d399', '#fbbf24']
     });
+
+    // 2. Grava no Firestore
+    try {
+      await addEventToFirestore(newEventData);
+    } catch (err) {
+      console.error('Falha ao salvar no Firestore, mantido localmente:', err);
+    }
   };
 
-  const handleDeleteEvent = (id: string) => {
+  const handleDeleteEvent = async (id: string) => {
     setEvents(prev => prev.filter(e => e.id !== id));
+    try {
+      await deleteEventFromFirestore(id);
+    } catch (err) {
+      console.error('Falha ao excluir no Firestore:', err);
+    }
   };
 
   return (
@@ -63,9 +116,24 @@ export function App() {
             <Sparkles className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h1 className="text-lg font-bold tracking-tight text-white">
-              Aetheris <span className="text-blue-400 font-light">| Pai & Filho</span>
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-lg font-bold tracking-tight text-white">
+                Aetheris <span className="text-blue-400 font-light">| Pai & Filho</span>
+              </h1>
+              {isSyncing ? (
+                <span className="flex items-center gap-1 text-[10px] text-zinc-400 bg-white/5 border border-white/10 px-2 py-0.5 rounded-full">
+                  <Cloud className="w-3 h-3 text-blue-400 animate-pulse" /> Sincronizando...
+                </span>
+              ) : syncError ? (
+                <span className="flex items-center gap-1 text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full" title="Operando com armazenamento local">
+                  <CloudOff className="w-3 h-3" /> Modo Local
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
+                  <Cloud className="w-3 h-3" /> Nuvem Ativa
+                </span>
+              )}
+            </div>
             <p className="text-xs text-zinc-400 tracking-wide font-light">
               Cronologia de memórias afetivas e prestação de cuidados financeiros
             </p>
