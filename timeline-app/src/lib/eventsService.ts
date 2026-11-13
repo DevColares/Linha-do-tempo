@@ -81,6 +81,11 @@ export async function deleteEventFromFirestore(id: string): Promise<void> {
 
 // Inicializar banco com dados padrão se estiver vazio
 export async function seedInitialDataIfEmpty(): Promise<boolean> {
+  const hasSeededBefore = localStorage.getItem('has_seeded_firestore_v1');
+  if (hasSeededBefore) {
+    return false;
+  }
+
   const eventsRef = collection(db, COLLECTION_NAME);
   const snapshot = await getDocs(eventsRef);
   if (snapshot.empty) {
@@ -95,8 +100,11 @@ export async function seedInitialDataIfEmpty(): Promise<boolean> {
       batch.set(newDocRef, cleanItem);
     });
     await batch.commit();
+    localStorage.setItem('has_seeded_firestore_v1', 'true');
     return true;
   }
+  
+  localStorage.setItem('has_seeded_firestore_v1', 'true');
   return false;
 }
 

@@ -42,10 +42,8 @@ export function App() {
         await seedInitialDataIfEmpty();
         unsubscribe = subscribeToEvents(
           (cloudEvents) => {
-            if (cloudEvents.length > 0) {
-              setEvents(cloudEvents);
-              localStorage.setItem('timeline_hybrid_events_v2', JSON.stringify(cloudEvents));
-            }
+            setEvents(cloudEvents);
+            localStorage.setItem('timeline_hybrid_events_v2', JSON.stringify(cloudEvents));
             setIsSyncing(false);
             setSyncError(null);
           },
@@ -70,37 +68,47 @@ export function App() {
   }, []);
 
   const handleAddEvent = async (newEventData: Omit<TimelineEvent, 'id'>) => {
-    // 1. Otimista local
-    const tempId = (newEventData.eventType === 'moment' ? 'mom-' : 'exp-') + Date.now();
-    const newEvent: TimelineEvent = {
-      ...newEventData,
-      id: tempId
-    };
-    setEvents(prev => [newEvent, ...prev]);
+    // 1. Grava no Firestore
+    try {
+      const docId = await addEventToFirestore(newEventData);
+      const newEvent: TimelineEvent = {
+        ...newEventData,
+        id: docId
+      };
+      setEvents(prev => [newEvent, ...prev.filter(e => e.id !== docId)]);
+    } catch (err) {
+      console.error('Falha ao salvar no Firestore, usando id temporário:', err);
+      const tempId = (newEventData.eventType === 'moment' ? 'mom-' : 'exp-') + Date.now();
+      const newEvent: TimelineEvent = {
+        ...newEventData,
+        id: tempId
+      };
+      setEvents(prev => [newEvent, ...prev]);
+    }
 
     confetti({
       particleCount: 60,
       spread: 70,
       origin: { y: 0.8 },
-      colors: newEvent.eventType === 'moment' 
+      colors: newEventData.eventType === 'moment' 
         ? ['#f472b6', '#fb7185', '#c084fc'] 
         : ['#60a5fa', '#34d399', '#fbbf24']
     });
-
-    // 2. Grava no Firestore
-    try {
-      await addEventToFirestore(newEventData);
-    } catch (err) {
-      console.error('Falha ao salvar no Firestore, mantido localmente:', err);
-    }
   };
 
   const handleDeleteEvent = async (id: string) => {
-    setEvents(prev => prev.filter(e => e.id !== id));
+    const previousEvents = [...events];
+    const updated = events.filter(e => e.id !== id);
+    setEvents(updated);
+    localStorage.setItem('timeline_hybrid_events_v2', JSON.stringify(updated));
+
     try {
       await deleteEventFromFirestore(id);
     } catch (err) {
       console.error('Falha ao excluir no Firestore:', err);
+      setEvents(previousEvents);
+      localStorage.setItem('timeline_hybrid_events_v2', JSON.stringify(previousEvents));
+      alert('Não foi possível excluir do banco de dados na nuvem. Verifique a conexão ou permissões do Firebase.');
     }
   };
 
