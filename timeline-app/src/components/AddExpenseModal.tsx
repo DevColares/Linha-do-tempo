@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
-import { PlusCircle, X, DollarSign, Heart } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { PlusCircle, X, DollarSign, Heart, Camera, Image as ImageIcon, Trash2, Loader2 } from 'lucide-react';
 import type { TimelineEvent, ExpenseCategory, MomentTag } from '../types';
 import { CATEGORY_CONFIG, MOMENT_TAG_CONFIG } from '../types';
+import { uploadAttachment } from '../lib/storageService';
 
 interface AddEventModalProps {
   isOpen: boolean;
@@ -19,7 +20,14 @@ export const AddExpenseModal: React.FC<AddEventModalProps> = ({
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [description, setDescription] = useState('');
   const [location, setLocation] = useState('');
-  const [imageUrl, setImageUrl] = useState('');
+  
+  // Arquivo local (câmera / galeria)
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   // Campos específicos de financeiro
   const [amount, setAmount] = useState('');
@@ -33,61 +41,90 @@ export const AddExpenseModal: React.FC<AddEventModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedFile(file);
+      const localUrl = URL.createObjectURL(file);
+      setPreviewUrl(localUrl);
+    }
+  };
+
+  const handleRemoveFile = () => {
+    setSelectedFile(null);
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (cameraInputRef.current) cameraInputRef.current.value = '';
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title || !date) return;
 
-    if (eventType === 'financial') {
-      const parsedAmount = parseFloat(amount.replace(',', '.'));
-      if (isNaN(parsedAmount) || parsedAmount <= 0) return;
+    setIsUploading(true);
 
-      onAdd({
-        eventType: 'financial',
-        title,
-        amount: parsedAmount,
-        date,
-        category,
-        description,
-        paymentMethod,
-        isEssential,
-        location: location.trim() || undefined,
-        attachments: imageUrl.trim()
-          ? [
-              {
-                id: 'rec-' + Date.now(),
-                name: 'Comprovante_' + title.slice(0, 15) + '.jpg',
-                type: 'image',
-                url: imageUrl.trim(),
-                size: '1.8 MB'
-              }
-            ]
-          : []
-      });
-    } else {
-      // Registro de Momento Afetivo
-      onAdd({
-        eventType: 'moment',
-        title,
-        date,
-        description,
-        momentTag,
-        emotion,
-        location: location.trim() || undefined,
-        attachments: imageUrl.trim()
-          ? [
-              {
-                id: 'rec-' + Date.now(),
-                name: 'Foto_' + title.slice(0, 15) + '.jpg',
-                type: 'image',
-                url: imageUrl.trim(),
-                size: '2.5 MB'
-              }
-            ]
-          : []
-      });
+    try {
+      let attachments: any[] = [];
+      if (selectedFile) {
+        const uploaded = await uploadAttachment(selectedFile, eventType === 'financial' ? 'comprovantes' : 'momentos');
+        attachments = [
+          {
+            id: 'rec-' + Date.now(),
+            name: uploaded.name,
+            type: selectedFile.type.startsWith('image/') ? 'image' : 'pdf',
+            url: uploaded.url,
+            size: uploaded.size
+          }
+        ];
+      }
+
+      if (eventType === 'financial') {
+        const parsedAmount = parseFloat(amount.replace(',', '.'));
+        if (isNaN(parsedAmount) || parsedAmount <= 0) {
+          setIsUploading(false);
+          return;
+        }
+
+        onAdd({
+          eventType: 'financial',
+          title,
+          amount: parsedAmount,
+          date,
+          category,
+          description,
+          paymentMethod,
+          isEssential,
+          location: location.trim() || undefined,
+          attachments
+        });
+      } else {
+        // Registro de Momento Afetivo
+        onAdd({
+          eventType: 'moment',
+          title,
+          date,
+          description,
+          momentTag,
+          emotion,
+          location: location.trim() || undefined,
+          attachments
+        });
+      }
+
+      // Limpar campos
+      handleRemoveFile();
+      setTitle('');
+      setDescription('');
+      setAmount('');
+      setLocation('');
+      onClose();
+    } catch (err) {
+      console.error('Erro ao salvar registro:', err);
+      alert('Erro ao processar imagem ou salvar registro.');
+    } finally {
+      setIsUploading(false);
     }
-
-    onClose();
   };
 
   return (
@@ -271,17 +308,77 @@ export const AddExpenseModal: React.FC<AddEventModalProps> = ({
             />
           </div>
 
-          <div>
-            <label className="block text-zinc-300 font-medium mb-1">
-              {eventType === 'financial' ? 'Link da Imagem do Comprovante (Opcional)' : 'Link da Foto do Momento (Opcional)'}
+          {/* Upload de Imagem (Câmera ou Galeria do Celular) */}
+          <div className="p-3 rounded-xl bg-white/[0.03] border border-white/10 space-y-2.5">
+            <label className="block text-zinc-300 font-medium">
+              {eventType === 'financial' ? 'Comprovante / Recibo' : 'Foto da Lembrança'}
             </label>
-            <input
-              type="url"
-              placeholder="https://exemplo.com/foto.jpg ou link da imagem"
-              value={imageUrl}
-              onChange={(e) => setImageUrl(e.target.value)}
-              className="w-full bg-white/[0.05] border border-white/10 rounded-xl px-3.5 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-blue-500/50 text-sm sm:text-xs"
+
+            {/* Inputs ocultos nativos do navegador/celular */}
+            <input 
+              ref={cameraInputRef}
+              type="file" 
+              accept="image/*" 
+              capture="environment" 
+              onChange={handleFileChange}
+              className="hidden" 
             />
+            <input 
+              ref={fileInputRef}
+              type="file" 
+              accept="image/*,application/pdf" 
+              onChange={handleFileChange}
+              className="hidden" 
+            />
+
+            {previewUrl ? (
+              <div className="relative rounded-xl overflow-hidden border border-white/20 bg-zinc-900 flex items-center justify-between p-2">
+                <div className="flex items-center gap-3 min-w-0">
+                  <img 
+                    src={previewUrl} 
+                    alt="Preview" 
+                    className="w-12 h-12 rounded-lg object-cover border border-white/10 shrink-0" 
+                  />
+                  <div className="min-w-0">
+                    <p className="text-xs text-white font-medium truncate">
+                      {selectedFile?.name || 'Foto selecionada'}
+                    </p>
+                    <span className="text-[10px] text-zinc-400">
+                      {selectedFile ? (selectedFile.size / 1024 / 1024).toFixed(2) + ' MB' : ''}
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleRemoveFile}
+                  className="p-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
+                  title="Remover foto"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => cameraInputRef.current?.click()}
+                  className="flex items-center justify-center gap-2 p-2.5 rounded-xl border border-dashed border-white/20 hover:border-white/40 bg-white/[0.02] hover:bg-white/[0.05] active:bg-white/[0.08] text-zinc-300 text-xs font-medium transition-all cursor-pointer touch-manipulation"
+                >
+                  <Camera className="w-4 h-4 text-blue-400 shrink-0" />
+                  <span>Tirar Foto</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center justify-center gap-2 p-2.5 rounded-xl border border-dashed border-white/20 hover:border-white/40 bg-white/[0.02] hover:bg-white/[0.05] active:bg-white/[0.08] text-zinc-300 text-xs font-medium transition-all cursor-pointer touch-manipulation"
+                >
+                  <ImageIcon className="w-4 h-4 text-pink-400 shrink-0" />
+                  <span>Galeria / Arquivo</span>
+                </button>
+              </div>
+            )}
           </div>
 
           {eventType === 'financial' && (
@@ -302,20 +399,29 @@ export const AddExpenseModal: React.FC<AddEventModalProps> = ({
           <div className="pt-3 sm:pt-4 border-t border-white/10 flex items-center justify-end gap-2 sm:gap-3 pb-2 sm:pb-0">
             <button
               type="button"
+              disabled={isUploading}
               onClick={onClose}
-              className="px-3.5 py-2 rounded-xl text-zinc-400 hover:text-white transition-colors cursor-pointer text-xs"
+              className="px-3.5 py-2 rounded-xl text-zinc-400 hover:text-white transition-colors cursor-pointer text-xs disabled:opacity-50"
             >
               Cancelar
             </button>
             <button
               type="submit"
-              className={`px-4 sm:px-5 py-2.5 rounded-xl font-medium text-white shadow-lg transition-all cursor-pointer text-xs sm:text-sm active:scale-95 ${
+              disabled={isUploading}
+              className={`flex items-center gap-1.5 px-4 sm:px-5 py-2.5 rounded-xl font-medium text-white shadow-lg transition-all cursor-pointer text-xs sm:text-sm active:scale-95 disabled:opacity-50 ${
                 eventType === 'financial'
                   ? 'bg-blue-600 hover:bg-blue-500 shadow-blue-600/30'
                   : 'bg-pink-600 hover:bg-pink-500 shadow-pink-600/30'
               }`}
             >
-              Gravar Registro
+              {isUploading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Enviando Foto...
+                </>
+              ) : (
+                'Gravar Registro'
+              )}
             </button>
           </div>
         </form>
